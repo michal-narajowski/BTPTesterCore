@@ -27,6 +27,39 @@ from stack.stack import Stack
 
 log = logging.debug
 
+ID = 0
+
+
+def check_call(*args, **kwargs):
+    logging.debug("check_call: {} {}".format(args, kwargs))
+    return subprocess.check_call(*args, **kwargs)
+
+
+def check_output(*args, **kwargs):
+    logging.debug("check_output: {} {}".format(args, kwargs))
+    return subprocess.check_output(*args, **kwargs)
+
+
+def get_next_id():
+    global ID
+    next_id = ID
+    ID += 1
+    return next_id
+
+
+def _android_list_devices():
+    output = subprocess.check_output('adb devices', shell=True).decode().strip().splitlines()
+    # First line is "List of devices attached"
+    output = output[1:]
+    devices = []
+    for line in output:
+        fields = line.split()
+        if len(fields) < 2:
+            continue
+        devices.append(fields[0])
+
+    return devices
+
 
 def _adb_prefix(sn):
     return "adb {}".format('-s {} '.format(sn) if sn else '')
@@ -63,19 +96,18 @@ def _adb_tap_ok(sn):
 
 
 def _adb_stop_app(sn):
-    cmd = "am force-stop com.juul.btptesterandroid"
+    cmd = "shell am force-stop com.juul.btptesterandroid"
     subprocess.check_call(_adb_prefix(sn) + cmd, shell=True)
 
 
 def _adb_start_app(sn):
-    cmd = "am start -n com.juul.btptesterandroid/com.juul.btptesterandroid" \
+    cmd = "shell am start -n com.juul.btptesterandroid/com.juul.btptesterandroid" \
           ".MainActivity "
     subprocess.check_call(_adb_prefix(sn) + cmd, shell=True)
 
 
 def _adb_open_bluetooth_settings(sn):
-    cmd = "shell am start -S com.android.settings/com.android.settings" \
-          ".bluetooth.BluetoothSettings "
+    cmd = "shell am start -a android.settings.BLUETOOTH_SETTINGS"
     subprocess.check_call(_adb_prefix(sn) + cmd, shell=True)
 
 
@@ -87,11 +119,17 @@ def _adb_get_ip(sn):
 
 
 class AndroidCtl(IutCtl):
-    def __init__(self, serial_num, host=None, port=None):
+    def __init__(self, serial_num=None, host=None, port=None):
         log("%s.%s serial_num=%s host=%s port=%s",
             self.__class__, self.__init__.__name__, serial_num, host, port)
 
-        self.serial_num = serial_num
+        self.id = get_next_id()
+
+        if serial_num:
+            self.serial_num = serial_num
+        else:
+            devices = _android_list_devices()
+            self.serial_num = devices[self.id]
 
         if host:
             self.host = host
@@ -137,7 +175,7 @@ class AndroidCtl(IutCtl):
 
         self._btp_socket = BTPWebSocket(self.host, self.port)
         self._btp_worker = BTPWorker(self._btp_socket, 'RxWorkerAndroid-' +
-                                     self.serial_num)
+                                     str(self.id))
         self._btp_worker.open()
         self._btp_worker.register_event_handler(self._event_handler)
         self._btp_worker.accept()
@@ -151,7 +189,6 @@ class AndroidCtl(IutCtl):
         # settings activity. When in this activity Android displays
         # the popup window instead of the notification.
         _adb_open_bluetooth_settings(self.serial_num)
-        pass
 
     def wait_iut_ready_event(self):
         self.reset()
